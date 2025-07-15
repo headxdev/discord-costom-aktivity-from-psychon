@@ -127,8 +127,23 @@ class DiscordPresenceApp:
         style.configure("TLabelframe.Label", background="#23272A", foreground="#7289DA", font=("Segoe UI", 10, "bold"))
         style.configure("Card.TFrame", background="#2C2F33", relief="solid", borderwidth=1)
 
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # --- SCROLLABLE MAIN FRAME ---
+        container = ttk.Frame(self.root)
+        container.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(container, borderwidth=0, background="#23272A", highlightthickness=0)
+        main_frame = ttk.Frame(canvas, padding="10")
+        vsb = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.create_window((0, 0), window=main_frame, anchor="nw")
+        main_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        # Mousewheel scroll support
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        main_frame.bind_all("<MouseWheel>", _on_mousewheel)
+        # --- END SCROLLABLE MAIN FRAME ---
 
         # Title
         title_label = ttk.Label(
@@ -334,10 +349,6 @@ class DiscordPresenceApp:
         row = ttk.Frame(self.buttons_container)
         row.pack(fill=tk.X, pady=2)
 
-        # Button label
-        btn = ttk.Button(row, text="Button", width=10)
-        btn.pack(side=tk.LEFT, padx=(0, 5))
-
         # Dropdown for function selection
         func_var = tk.StringVar(value="Nichts")
         func_dropdown = ttk.Combobox(row, textvariable=func_var, values=list(self.available_functions.keys()), width=18, state="readonly")
@@ -354,7 +365,6 @@ class DiscordPresenceApp:
         # Store in list
         self.custom_buttons.append({
             "frame": row,
-            "button": btn,
             "func_var": func_var,
             "config_frame": config_frame,
             "func_dropdown": func_dropdown
@@ -634,22 +644,22 @@ class DiscordPresenceApp:
                 
     def send_presence(self, title, start):
         try:
+            # Discord requires 'details' to be at least 2 characters long
+            details = title if title and len(title.strip()) >= 2 else "Aktivität"
             payload = {
                 "state": self.desc_var.get(),
-                "details": title,
+                "details": details,
                 "large_text": "headxPresence XT 🔥"
             }
-            
+
             # Handle images
             large_img = self.image_var.get()
             if large_img:
                 if os.path.isfile(large_img):
-                    # If it's a file path, use filename as key
                     payload["large_image"] = os.path.splitext(os.path.basename(large_img))[0]
                 else:
-                    # If it's already a key, use it directly
                     payload["large_image"] = large_img
-            
+
             small_img = self.small_image_var.get()
             if small_img:
                 if os.path.isfile(small_img):
@@ -657,12 +667,12 @@ class DiscordPresenceApp:
                 else:
                     payload["small_image"] = small_img
                 payload["small_text"] = "by headx"
-                
+
             if self.use_timer.get():
                 payload["start"] = start
-                
+
             self.rpc.update(**payload)
-            
+
         except Exception as e:
             self.log_message(f"Fehler beim Senden: {e}")
             
@@ -732,7 +742,46 @@ class DiscordPresenceApp:
                 self.profile_var.set("")
                 self.log_message(f"Profil '{name}' gelöscht")
 
+
+
+# --- Single Instance via OS process check (Windows only, reliable for tray apps) ---
+import os
+import sys
+import psutil
+
+def is_already_running():
+    this_pid = os.getpid()
+    this_exe = sys.executable.lower()
+    for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
+        try:
+            if proc.info['pid'] == this_pid:
+                continue
+            # Check for same script name in cmdline (pythonw.exe ... main.pyw)
+            if proc.info['cmdline'] and any('main.pyw' in str(arg).lower() for arg in proc.info['cmdline']):
+                return True
+            # Or same exe (if frozen)
+            if proc.info['exe'] and proc.info['exe'].lower() == this_exe:
+                return True
+        except Exception:
+            continue
+    return False
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = DiscordPresenceApp(root)
-    root.mainloop()
+    try:
+        import psutil
+    except ImportError:
+        import subprocess
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'psutil'])
+        import psutil
+
+    if is_already_running():
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Schon gestartet", "Das Programm läuft bereits (auch im System-Tray) und kann nicht mehrfach geöffnet werden.")
+        root.destroy()
+    else:
+        root = tk.Tk()
+        app = DiscordPresenceApp(root)
+        root.mainloop()
